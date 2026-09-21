@@ -1,0 +1,72 @@
+{
+  "version": "2026-09-01-v2",
+  "createdAtEpochMillis": 1788268800000,
+  "classifications": [
+    {"path": "user.name",            "level": "L1", "required": true,  "valueTypes": ["String"]},
+    {"path": "user.email",           "level": "L2", "required": true,  "valueTypes": ["String"]},
+    {"path": "user.phone",           "level": "L2", "required": false, "valueTypes": ["String"]},
+    {"path": "user.address",         "level": "L2", "required": false, "valueTypes": ["String"]},
+    {"path": "user.idCard",          "level": "L4", "required": false, "valueTypes": ["String"]},
+    {"path": "user.creditScore",     "level": "L3", "required": false, "valueTypes": ["Integer"]},
+    {"path": "user.contacts[*].name","level": "L1", "required": false, "valueTypes": ["String"]},
+    {"path": "user.contacts[*].phone","level": "L2","required": false, "valueTypes": ["String"]}
+  ],
+  "callers": [
+    {
+      "callerId": "svc-analytics",
+      "revoked": false,
+      "purposes": [
+        {
+          "purpose": "analytics",
+          "maxLevels": ["L1", "L2"],
+          "grants": [
+            {"fieldPath": "user.name",  "allowedPurposes": ["analytics"], "transform": "NONE"},
+            {"fieldPath": "user.email", "allowedPurposes": ["analytics"], "transform": "TOKENIZE"},
+            {"fieldPath": "user.phone", "allowedPurposes": ["analytics"], "transform": "MASK"},
+            {"fieldPath": "user.contacts[*].name",  "allowedPurposes": ["analytics"], "transform": "NONE"},
+            {"fieldPath": "user.contacts[*].phone", "allowedPurposes": ["analytics"], "transform": "MASK"}
+          ]
+        },
+        {
+          "purpose": "billing",
+          "maxLevels": ["L1", "L2", "L3"],
+          "grants": [
+            {"fieldPath": "user.name",        "allowedPurposes": ["billing"], "transform": "NONE"},
+            {"fieldPath": "user.email",       "allowedPurposes": ["billing"], "transform": "MASK"},
+            {"fieldPath": "user.creditScore", "allowedPurposes": ["billing"], "transform": "NONE"}
+          ]
+        }
+      ]
+    },
+    {
+      "callerId": "svc-support",
+      "revoked": false,
+      "purposes": [
+        {
+          "purpose": "customer-support",
+          "maxLevels": ["L1", "L2", "L3"],
+          "grants": [
+            {"fieldPath": "user.name",    "allowedPurposes": ["customer-support"], "transform": "NONE"},
+            {"fieldPath": "user.email",   "allowedPurposes": ["customer-support"], "transform": "MASK"},
+            {"fieldPath": "user.phone",   "allowedPurposes": ["customer-support"], "transform": "MASK"},
+            {"fieldPath": "user.address", "allowedPurposes": ["customer-support"], "transform": "REDACT"}
+          ]
+        }
+      ]
+    },
+    {
+      "callerId": "svc-legacy",
+      "revoked": true,
+      "purposes": [
+        {
+          "purpose": "analytics",
+          "maxLevels": ["L1", "L2", "L3", "L4"],
+          "grants": [
+            {"fieldPath": "user.name",   "allowedPurposes": ["analytics"], "transform": "NONE"},
+            {"fieldPath": "user.idCard", "allowedPurposes": ["analytics"], "transform": "NONE"}
+          ]
+        }
+      ]
+    }
+  ]
+}
