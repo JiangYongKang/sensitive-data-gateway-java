@@ -1,0 +1,19 @@
+{
+  "version": "classification-v1",
+  "fieldLevels": {
+    "name": "L1",
+    "email": "L2",
+    "phone": "L2",
+    "address": "L3",
+    "ssn": "L4",
+    "bankAccount": "L4",
+    "person.passportNo": "L4",
+    "payment.cardNo": "L4"
+  },
+  "unclassified": [
+    "taxId"
+  ],
+  "required": [
+    "name"
+  ]
+}

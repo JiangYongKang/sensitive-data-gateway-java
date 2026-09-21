@@ -1,0 +1,18 @@
+package com.github.highcumontoa.sensitivedatagatewayjava.audit;
+
+import com.github.highcumontoa.sensitivedatagatewayjava.domain.AccessRequest;
+import com.github.highcumontoa.sensitivedatagatewayjava.domain.AuditRecord;
+import com.github.highcumontoa.sensitivedatagatewayjava.domain.FieldResult;
+import com.github.highcumontoa.sensitivedatagatewayjava.domain.GatewayErrorCode;
+
+import java.util.List;
+
+/**
+ * 审计服务：写入失败归一化为 AUDIT_WRITE_FAILED，不得静默。
+ */
+public interface AuditService {
+
+    AuditRecord record(AccessRequest request, String policyVersion, String classificationVersion,
+                       boolean allowed, GatewayErrorCode denyReason, String decisionBasis,
+                       List<FieldResult> fields, String requestHash);
+}

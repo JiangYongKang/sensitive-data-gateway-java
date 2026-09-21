@@ -1,0 +1,32 @@
+{
+  "version": "policy-v1",
+  "grants": {
+    "caller-analytics": {
+      "purposes": ["analytics"],
+      "maxLevel": "L2",
+      "transforms": [
+        { "level": "L1", "transform": "MASK" },
+        { "level": "L2", "transform": "TOKENIZE" }
+      ]
+    },
+    "caller-support": {
+      "purposes": ["customer-support"],
+      "maxLevel": "L3",
+      "transforms": [
+        { "level": "L1", "transform": "NONE" },
+        { "level": "L2", "transform": "MASK" },
+        { "level": "L3", "transform": "REDACT" }
+      ]
+    },
+    "caller-admin": {
+      "purposes": ["audit-review"],
+      "maxLevel": "L4",
+      "transforms": [
+        { "level": "L1", "transform": "NONE" },
+        { "level": "L2", "transform": "NONE" },
+        { "level": "L3", "transform": "MASK" },
+        { "level": "L4", "transform": "REDACT" }
+      ]
+    }
+  }
+}

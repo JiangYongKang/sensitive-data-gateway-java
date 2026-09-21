@@ -1,0 +1,22 @@
+package com.github.highcumontoa.sensitivedatagatewayjava.domain;
+
+/**
+ * 网关对外归一化错误码。每个常量代表一种彼此可区分的拒绝/降级原因。
+ */
+public enum GatewayErrorCode {
+    FIELD_MISSING,
+    CLASSIFICATION_UNDEFINED,
+    DATA_MALFORMED,
+    UNAUTHORIZED_CALLER,
+    PURPOSE_MISMATCH,
+    LEVEL_NOT_GRANTED,
+    POLICY_NOT_FOUND,
+    POLICY_VERSION_FALLBACK_REJECTED,
+    AUDIT_WRITE_FAILED,
+    DEPTH_LIMIT_EXCEEDED,
+    SIZE_LIMIT_EXCEEDED,
+    TIMEOUT_EXCEEDED,
+    DOWNSTREAM_FAILURE,
+    INTERNAL_ERROR,
+    BAD_REQUEST
+}
