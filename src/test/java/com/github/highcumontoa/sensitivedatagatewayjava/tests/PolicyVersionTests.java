@@ -96,8 +96,31 @@ class PolicyVersionTests extends AbstractIntegrationTest {
     @Test
     void unknown_version_is_not_found() throws Exception {
         var result = access(payload(data(), "caller-analytics", "analytics", "policy-999"));
-        assertEquals(403, result.getResponse().getStatus());
-        assertEquals("POLICY_VERSION_FALLBACK_REJECTED", json(result).path("code").asText());
+        // 从未发布过的版本：与“已发布但非当前”明确区分 -> POLICY_NOT_FOUND（404）
+        assertEquals(404, result.getResponse().getStatus());
+        assertEquals("POLICY_NOT_FOUND", json(result).path("code").asText());
+    }
+
+    @Test
+    void published_but_non_current_version_is_distinctly_rejected() throws Exception {
+        // v1 已发布；发布 v2 成为当前后，显式要求 v1 -> FALLBACK_REJECTED（403），不拿 v2 代替
+        publishV2();
+        try {
+            var result = access(payload(data(), "caller-analytics", "analytics", "policy-v1"));
+            assertEquals(403, result.getResponse().getStatus());
+            var node = json(result);
+            assertEquals("POLICY_VERSION_FALLBACK_REJECTED", node.path("code").asText());
+            assertTrue(node.path("message").asText().contains("policy-v2"));
+
+            var records = auditStore.findAll();
+            boolean fallbackAudit = records.stream().anyMatch(r ->
+                    "POLICY_VERSION_FALLBACK_REJECTED".equals(
+                            r.denyReason() == null ? null : r.denyReason().name())
+                            && "policy-v1".equals(r.policyVersion()));
+            assertTrue(fallbackAudit);
+        } finally {
+            policyRegistry.publish(SeedSnapshot.seedPolicy());
+        }
     }
 
     private void publishV2() {

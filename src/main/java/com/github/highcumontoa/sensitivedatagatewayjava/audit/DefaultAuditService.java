@@ -5,6 +5,7 @@ import com.github.highcumontoa.sensitivedatagatewayjava.domain.AuditRecord;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.FieldResult;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.GatewayErrorCode;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.GatewayException;
+import com.github.highcumontoa.sensitivedatagatewayjava.domain.RecordFieldResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -48,6 +49,36 @@ public class DefaultAuditService implements AuditService {
                 decisionBasis,
                 fields == null ? List.of() : List.copyOf(fields),
                 requestHash);
+        append(record);
+        return record;
+    }
+
+    @Override
+    public AuditRecord recordBatch(String callerId, String purpose,
+                                   String policyVersion, String classificationVersion,
+                                   boolean allowed, GatewayErrorCode denyReason, String decisionBasis,
+                                   int recordCount, List<RecordFieldResult> batchFields,
+                                   String requestHash) {
+        AuditRecord record = new AuditRecord(
+                UUID.randomUUID().toString(),
+                Instant.now(),
+                callerId,
+                purpose,
+                policyVersion,
+                classificationVersion,
+                allowed,
+                denyReason,
+                decisionBasis,
+                List.of(),
+                requestHash,
+                true,
+                recordCount,
+                batchFields == null ? List.of() : List.copyOf(batchFields));
+        append(record);
+        return record;
+    }
+
+    private void append(AuditRecord record) {
         try {
             store.append(record);
         } catch (GatewayException ge) {
@@ -56,12 +87,12 @@ public class DefaultAuditService implements AuditService {
             throw new GatewayException(GatewayErrorCode.AUDIT_WRITE_FAILED,
                     "audit record could not be persisted", e);
         }
-        log.info("AUDIT {} caller={} purpose={} policyVersion={} classificationVersion={} allowed={} "
-                        + "denyReason={} basis={} requestHash={}",
-                record.auditId(), record.callerId(), record.purpose(),
+        log.info("AUDIT {} batch={} caller={} purpose={} policyVersion={} classificationVersion={} "
+                        + "allowed={} recordCount={} denyReason={} basis={} requestHash={}",
+                record.auditId(), record.batch(), record.callerId(), record.purpose(),
                 record.policyVersion(), record.classificationVersion(),
-                allowed, denyReason, decisionBasis, requestHash);
-        return record;
+                record.allowed(), record.recordCount(),
+                record.denyReason(), record.decisionBasis(), record.requestHash());
     }
 
     /**

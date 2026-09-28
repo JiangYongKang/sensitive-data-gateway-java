@@ -45,6 +45,25 @@ public abstract class AbstractIntegrationTest {
                 .andReturn();
     }
 
+    protected MvcResult accessBatch(String body) throws Exception {
+        return mockMvc.perform(post("/api/v1/data/batch")
+                        .contentType("application/json")
+                        .content(body))
+                .andReturn();
+    }
+
+    protected String batchPayload(Object records, String caller, String purpose, String version)
+            throws Exception {
+        var node = objectMapper.createObjectNode();
+        node.put("callerId", caller);
+        node.put("purpose", purpose);
+        if (version != null) {
+            node.put("policyVersion", version);
+        }
+        node.set("records", objectMapper.valueToTree(records));
+        return objectMapper.writeValueAsString(node);
+    }
+
     protected JsonNode json(MvcResult result) throws Exception {
         return objectMapper.readTree(result.getResponse().getContentAsString());
     }

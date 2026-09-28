@@ -30,6 +30,11 @@ public class InMemoryPolicyRegistry implements PolicyRegistry {
     }
 
     @Override
+    public boolean exists(String version) {
+        return version != null && versions.containsKey(version);
+    }
+
+    @Override
     public AccessPolicy latest() {
         AccessPolicy snapshot = latest;
         if (snapshot == null) {
