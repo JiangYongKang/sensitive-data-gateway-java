@@ -24,7 +24,7 @@ public class InMemoryClassificationRegistry implements ClassificationRegistry {
     public ClassificationDefinition get(String version) {
         ClassificationDefinition definition = versions.get(version);
         if (definition == null) {
-            throw new GatewayException(GatewayErrorCode.POLICY_NOT_FOUND,
+            throw new GatewayException(GatewayErrorCode.CLASSIFICATION_VERSION_NOT_FOUND,
                     "classification version not found: " + version);
         }
         return definition;
@@ -34,7 +34,7 @@ public class InMemoryClassificationRegistry implements ClassificationRegistry {
     public ClassificationDefinition latest() {
         ClassificationDefinition snapshot = latest;
         if (snapshot == null) {
-            throw new GatewayException(GatewayErrorCode.POLICY_NOT_FOUND,
+            throw new GatewayException(GatewayErrorCode.CLASSIFICATION_VERSION_NOT_FOUND,
                     "no classification version published");
         }
         return snapshot;

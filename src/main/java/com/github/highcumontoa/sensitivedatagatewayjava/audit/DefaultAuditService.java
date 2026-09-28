@@ -36,18 +36,44 @@ public class DefaultAuditService implements AuditService {
     public AuditRecord record(AccessRequest request, String policyVersion, String classificationVersion,
                               boolean allowed, GatewayErrorCode denyReason, String decisionBasis,
                               List<FieldResult> fields, String requestHash) {
+        return buildAndStore(request.callerId(), request.purpose(), policyVersion, classificationVersion,
+                allowed, denyReason, decisionBasis, fields, requestHash,
+                false, 1, null, null);
+    }
+
+    @Override
+    public AuditRecord recordBatch(String callerId, String purpose, String policyVersion,
+                                   String classificationVersion, boolean allowed,
+                                   GatewayErrorCode denyReason, String decisionBasis,
+                                   List<FieldResult> fields, String requestHash,
+                                   int recordCount, Integer recordIndex, String fieldPath) {
+        return buildAndStore(callerId, purpose, policyVersion, classificationVersion,
+                allowed, denyReason, decisionBasis, fields, requestHash,
+                true, recordCount, recordIndex, fieldPath);
+    }
+
+    private AuditRecord buildAndStore(String callerId, String purpose, String policyVersion,
+                                      String classificationVersion, boolean allowed,
+                                      GatewayErrorCode denyReason, String decisionBasis,
+                                      List<FieldResult> fields, String requestHash,
+                                      boolean batch, int recordCount,
+                                      Integer recordIndex, String fieldPath) {
         AuditRecord record = new AuditRecord(
                 UUID.randomUUID().toString(),
                 Instant.now(),
-                request.callerId(),
-                request.purpose(),
+                callerId,
+                purpose,
                 policyVersion,
                 classificationVersion,
                 allowed,
                 denyReason,
                 decisionBasis,
                 fields == null ? List.of() : List.copyOf(fields),
-                requestHash);
+                requestHash,
+                batch,
+                recordCount,
+                recordIndex,
+                fieldPath);
         try {
             store.append(record);
         } catch (GatewayException ge) {
@@ -56,11 +82,11 @@ public class DefaultAuditService implements AuditService {
             throw new GatewayException(GatewayErrorCode.AUDIT_WRITE_FAILED,
                     "audit record could not be persisted", e);
         }
-        log.info("AUDIT {} caller={} purpose={} policyVersion={} classificationVersion={} allowed={} "
-                        + "denyReason={} basis={} requestHash={}",
-                record.auditId(), record.callerId(), record.purpose(),
+        log.info("AUDIT {} batch={} caller={} purpose={} policyVersion={} classificationVersion={} allowed={} "
+                        + "denyReason={} recordIndex={} fieldPath={} basis={} requestHash={}",
+                record.auditId(), batch, record.callerId(), record.purpose(),
                 record.policyVersion(), record.classificationVersion(),
-                allowed, denyReason, decisionBasis, requestHash);
+                allowed, denyReason, recordIndex, fieldPath, decisionBasis, requestHash);
         return record;
     }
 

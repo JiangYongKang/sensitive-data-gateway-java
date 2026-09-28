@@ -14,6 +14,8 @@ import org.springframework.test.web.servlet.MvcResult;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
+import java.util.List;
+
 @SpringBootTest
 @AutoConfigureMockMvc
 @Import({TestConfig.class, SeedSnapshot.class})
@@ -43,6 +45,29 @@ public abstract class AbstractIntegrationTest {
                         .contentType("application/json")
                         .content(body))
                 .andReturn();
+    }
+
+    protected MvcResult accessBatch(String body) throws Exception {
+        return mockMvc.perform(post("/api/v1/data/access/batch")
+                        .contentType("application/json")
+                        .content(body))
+                .andReturn();
+    }
+
+    protected String batchPayload(java.util.List<Object> records, String caller, String purpose,
+                                  String policyVersion, String classificationVersion)
+            throws Exception {
+        var node = objectMapper.createObjectNode();
+        node.put("callerId", caller);
+        node.put("purpose", purpose);
+        if (policyVersion != null) {
+            node.put("policyVersion", policyVersion);
+        }
+        if (classificationVersion != null) {
+            node.put("classificationVersion", classificationVersion);
+        }
+        node.set("records", objectMapper.valueToTree(records));
+        return objectMapper.writeValueAsString(node);
     }
 
     protected JsonNode json(MvcResult result) throws Exception {

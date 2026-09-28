@@ -8,15 +8,22 @@ import com.github.highcumontoa.sensitivedatagatewayjava.classification.Classific
 import com.github.highcumontoa.sensitivedatagatewayjava.classification.ClassificationRegistry;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.AccessRequest;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.AuditRecord;
+import com.github.highcumontoa.sensitivedatagatewayjava.domain.BatchAccessRequest;
+import com.github.highcumontoa.sensitivedatagatewayjava.domain.BatchProcessedData;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.GatewayErrorCode;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.GatewayException;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.ProcessedData;
+import com.github.highcumontoa.sensitivedatagatewayjava.engine.BatchDataProcessingEngine;
 import com.github.highcumontoa.sensitivedatagatewayjava.engine.DataProcessingEngine;
 import com.github.highcumontoa.sensitivedatagatewayjava.policy.AccessPolicy;
 import com.github.highcumontoa.sensitivedatagatewayjava.policy.PolicyRegistry;
+import com.github.highcumontoa.sensitivedatagatewayjava.policy.VersionResolver;
+import com.github.highcumontoa.sensitivedatagatewayjava.policy.VersionSnapshot;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * 默认网关门面。
@@ -38,18 +45,24 @@ public class DefaultSensitiveDataGateway implements SensitiveDataGateway {
 
     private final PolicyRegistry policyRegistry;
     private final ClassificationRegistry classificationRegistry;
+    private final VersionResolver versionResolver;
     private final DataProcessingEngine engine;
+    private final BatchDataProcessingEngine batchEngine;
     private final AuditService auditService;
     private final ObjectMapper objectMapper;
 
     public DefaultSensitiveDataGateway(PolicyRegistry policyRegistry,
                                        ClassificationRegistry classificationRegistry,
+                                       VersionResolver versionResolver,
                                        DataProcessingEngine engine,
+                                       BatchDataProcessingEngine batchEngine,
                                        AuditService auditService,
                                        ObjectMapper objectMapper) {
         this.policyRegistry = policyRegistry;
         this.classificationRegistry = classificationRegistry;
+        this.versionResolver = versionResolver;
         this.engine = engine;
+        this.batchEngine = batchEngine;
         this.auditService = auditService;
         this.objectMapper = objectMapper;
     }
@@ -62,26 +75,22 @@ public class DefaultSensitiveDataGateway implements SensitiveDataGateway {
                 request.callerId(), request.purpose(), request.requestedPaths(),
                 request.policyVersion(), stablePayload(request));
 
-        // 一次性读取版本快照：整个请求期间使用同一不可变快照，不受并发发布影响
-        String latestPolicyVersion = policyRegistry.latestVersion();
-        AccessPolicy policy;
-        if (request.policyVersion() == null || request.policyVersion().isBlank()) {
-            policy = policyRegistry.latest();
-        } else {
-            if (!request.policyVersion().equals(latestPolicyVersion)) {
-                String basis = "explicit policy version " + request.policyVersion()
-                        + " is not the latest " + latestPolicyVersion;
-                AuditRecord rec = auditService.record(request, request.policyVersion(),
-                        safeClassificationVersion(), false,
-                        GatewayErrorCode.POLICY_VERSION_FALLBACK_REJECTED, basis,
-                        java.util.List.of(), requestHash);
-                throw new GatewayException(GatewayErrorCode.POLICY_VERSION_FALLBACK_REJECTED,
-                        "explicit fallback to older policy version is rejected; auditId="
-                                + rec.auditId() + " (latest=" + latestPolicyVersion + ")");
-            }
-            policy = policyRegistry.get(request.policyVersion());
+        // 一次性解析版本快照：整个请求期间使用同一不可变快照，不受并发发布影响。
+        // 从未发布 vs 已发布但非当前，由解析器给出可区分错误码；版本类拒绝也留审计。
+        VersionSnapshot versions;
+        try {
+            versions = versionResolver.resolve(request.policyVersion(), null);
+        } catch (GatewayException ve) {
+            AuditRecord rec = auditService.record(request,
+                    request.policyVersion(), safeClassificationVersion(), false,
+                    ve.getCode(), ve.getMessage() + " | "
+                            + request.callerId() + "/" + request.purpose(),
+                    java.util.List.of(), requestHash);
+            throw new GatewayException(ve.getCode(),
+                    ve.getMessage() + "; auditId=" + rec.auditId());
         }
-        ClassificationDefinition classification = classificationRegistry.latest();
+        AccessPolicy policy = versions.policy();
+        ClassificationDefinition classification = versions.classification();
 
         try {
             DataProcessingEngine.Result result = engine.process(request, policy, classification);
@@ -142,6 +151,94 @@ public class DefaultSensitiveDataGateway implements SensitiveDataGateway {
         } catch (JsonProcessingException e) {
             throw new GatewayException(GatewayErrorCode.DATA_MALFORMED,
                     "payload cannot be serialized for audit", e);
+        }
+    }
+
+    @Override
+    public BatchProcessedData accessBatch(BatchAccessRequest request) {
+        validateBatch(request);
+        String requestHash = DefaultAuditService.sha256(stableBatchPayload(request));
+        log.info("BATCH request raw caller={} purpose={} policyVersion={} classificationVersion={} "
+                        + "recordCount={} payload={}",
+                request.callerId(), request.purpose(), request.policyVersion(),
+                request.classificationVersion(), request.records().size(),
+                stableBatchPayload(request));
+
+        // 整批一次性固定策略与分级快照：处理期间任何发布/授权变更都不影响本批
+        VersionSnapshot versions;
+        try {
+            versions = versionResolver.resolve(request.policyVersion(), request.classificationVersion());
+        } catch (GatewayException ve) {
+            AuditRecord rec = auditService.recordBatch(request.callerId(), request.purpose(),
+                    request.policyVersion(),
+                    request.classificationVersion() == null
+                            ? safeClassificationVersion() : request.classificationVersion(),
+                    false, ve.getCode(),
+                    ve.getMessage() + " | " + request.callerId() + "/" + request.purpose(),
+                    List.of(), requestHash, request.records().size(), null, null);
+            throw new GatewayException(ve.getCode(),
+                    ve.getMessage() + "; auditId=" + rec.auditId());
+        }
+        AccessPolicy policy = versions.policy();
+        ClassificationDefinition classification = versions.classification();
+
+        try {
+            BatchDataProcessingEngine.BatchResult result =
+                    batchEngine.process(request, policy, classification);
+            AuditRecord record = auditService.recordBatch(request.callerId(), request.purpose(),
+                    policy.version(), classification.version(), true, null,
+                    result.decisionBasis(), result.allFieldResults(), requestHash,
+                    request.records().size(), null, null);
+            return new BatchProcessedData(record.auditId(), policy.version(),
+                    classification.version(), result.records().size(), result.records());
+        } catch (GatewayException ge) {
+            String basis = ge.getMessage() + " | " + request.callerId() + "/" + request.purpose();
+            AuditRecord rec = auditService.recordBatch(request.callerId(), request.purpose(),
+                    policy.version(), classification.version(), false, ge.getCode(), basis,
+                    List.of(), requestHash, request.records().size(),
+                    ge.getRecordIndex(), ge.getFieldPath());
+            throw new GatewayException(ge.getCode(),
+                    ge.getMessage() + "; auditId=" + rec.auditId(),
+                    ge.getRecordIndex(), ge.getFieldPath());
+        } catch (Exception e) {
+            GatewayException normalized = new GatewayException(GatewayErrorCode.INTERNAL_ERROR,
+                    "batch request could not be processed", e);
+            try {
+                auditService.recordBatch(request.callerId(), request.purpose(),
+                        policy.version(), classification.version(), false,
+                        GatewayErrorCode.INTERNAL_ERROR,
+                        "unexpected batch failure for " + request.callerId()
+                                + "/" + request.purpose() + ": " + e.getClass().getSimpleName(),
+                        List.of(), requestHash, request.records().size(), null, null);
+            } catch (Exception auditFailure) {
+                log.error("failed to write audit for unexpected batch failure", auditFailure);
+            }
+            throw normalized;
+        }
+    }
+
+    private void validateBatch(BatchAccessRequest request) {
+        if (request == null) {
+            throw new GatewayException(GatewayErrorCode.BAD_REQUEST, "request required");
+        }
+        if (request.callerId() == null || request.callerId().isBlank()) {
+            throw new GatewayException(GatewayErrorCode.BAD_REQUEST, "callerId required");
+        }
+        if (request.purpose() == null || request.purpose().isBlank()) {
+            throw new GatewayException(GatewayErrorCode.BAD_REQUEST, "purpose required");
+        }
+        if (request.records() == null || request.records().isEmpty()) {
+            throw new GatewayException(GatewayErrorCode.BAD_REQUEST,
+                    "records must contain at least one entry");
+        }
+    }
+
+    private String stableBatchPayload(BatchAccessRequest request) {
+        try {
+            return objectMapper.writeValueAsString(request.records());
+        } catch (JsonProcessingException e) {
+            throw new GatewayException(GatewayErrorCode.DATA_MALFORMED,
+                    "batch payload cannot be serialized for audit", e);
         }
     }
 }

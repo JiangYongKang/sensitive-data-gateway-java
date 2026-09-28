@@ -96,8 +96,14 @@ class PolicyVersionTests extends AbstractIntegrationTest {
     @Test
     void unknown_version_is_not_found() throws Exception {
         var result = access(payload(data(), "caller-analytics", "analytics", "policy-999"));
-        assertEquals(403, result.getResponse().getStatus());
-        assertEquals("POLICY_VERSION_FALLBACK_REJECTED", json(result).path("code").asText());
+        // 从未发布过的版本：404 POLICY_NOT_FOUND，与“已发布但非当前”的 403 回退拒绝可区分
+        assertEquals(404, result.getResponse().getStatus());
+        assertEquals("POLICY_NOT_FOUND", json(result).path("code").asText());
+        // 仍然留下审计痕迹
+        boolean notFoundAudit = auditStore.findAll().stream().anyMatch(r ->
+                "POLICY_NOT_FOUND".equals(r.denyReason() == null ? null : r.denyReason().name())
+                        && "policy-999".equals(r.policyVersion()));
+        assertTrue(notFoundAudit);
     }
 
     private void publishV2() {

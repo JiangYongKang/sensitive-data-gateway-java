@@ -99,7 +99,16 @@ public class DefaultTransformerFactory implements TransformerFactory {
         private final byte[] keyBytes;
 
         private TokenizeTransformer(String policyVersion, String fieldPath) {
-            String keyMaterial = LOCAL_ROOT_SALT + "|policy=" + policyVersion + "|field=" + fieldPath;
+            // 字段身份归一化：数组下标（[]）与嵌套前缀不属于字段身份，
+            // 只保留裸字段名（与分级识别的裸字段名匹配口径一致）。
+            // 因此同一原始值在同一字段、同一策略版本下，无论位于哪个记录、
+            // 哪个嵌套层级或数组位置都派生出同一密钥/令牌；
+            // 不同字段名仍相互隔离，策略版本变更后令牌随之改变。
+            String stripped = fieldPath.replace("[]", "");
+            int dot = stripped.lastIndexOf('.');
+            String fieldIdentity = dot < 0 ? stripped : stripped.substring(dot + 1);
+            String keyMaterial = LOCAL_ROOT_SALT + "|policy=" + policyVersion
+                    + "|field=" + fieldIdentity;
             this.keyBytes = keyMaterial.getBytes(StandardCharsets.UTF_8);
         }
 
