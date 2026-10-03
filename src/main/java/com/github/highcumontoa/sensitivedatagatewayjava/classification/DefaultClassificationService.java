@@ -20,7 +20,7 @@ public class DefaultClassificationService implements ClassificationService {
     }
 
     @Override
-    public SensitivityLevel classify(ClassificationDefinition def, String canonicalPath) {
+    public FieldClassification resolve(ClassificationDefinition def, String canonicalPath) {
         if (def == null) {
             throw new GatewayException(GatewayErrorCode.POLICY_NOT_FOUND,
                     "classification version not available");
@@ -30,12 +30,14 @@ public class DefaultClassificationService implements ClassificationService {
         }
         SensitivityLevel level = def.fieldLevels().get(canonicalPath);
         if (level != null) {
-            return level;
+            // 命中精确规范路径键：以该键标识“同一个分级字段”
+            return new FieldClassification(level, canonicalPath);
         }
         String leaf = leafName(canonicalPath);
         level = def.fieldLevels().get(leaf);
         if (level != null) {
-            return level;
+            // 命中裸字段名键：裸字段名即为字段域，与出现层级/数组下标/排序位置无关
+            return new FieldClassification(level, leaf);
         }
         if (def.unclassified().contains(canonicalPath) || def.unclassified().contains(leaf)) {
             throw new GatewayException(GatewayErrorCode.CLASSIFICATION_UNDEFINED,

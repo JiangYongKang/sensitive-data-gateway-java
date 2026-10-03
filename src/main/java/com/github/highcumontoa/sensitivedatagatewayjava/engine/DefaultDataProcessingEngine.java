@@ -2,6 +2,7 @@ package com.github.highcumontoa.sensitivedatagatewayjava.engine;
 
 import com.github.highcumontoa.sensitivedatagatewayjava.classification.ClassificationDefinition;
 import com.github.highcumontoa.sensitivedatagatewayjava.classification.ClassificationService;
+import com.github.highcumontoa.sensitivedatagatewayjava.classification.FieldClassification;
 import com.github.highcumontoa.sensitivedatagatewayjava.config.GatewayProperties;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.AccessRequest;
 import com.github.highcumontoa.sensitivedatagatewayjava.domain.FieldResult;
@@ -31,11 +32,14 @@ import java.util.Map;
  *   <li>敏感字段逐字段做策略判定：未授权/用途不匹配/等级不足即时拒绝；</li>
  *   <li>允许字段做 NONE/MASK/REDACT/TOKENIZE，层级与 JSON 类型族保持不变；
  *       命分级的键若承载标量数组，则逐元素转换、保持数组长度与顺序，
- *       且同一转换器派生自记录内规范路径，跨记录/跨位置同值同令牌；</li>
+ *       且同一转换器派生自命中的分级字段键（与层级/数组下标/记录序号无关），
+ *       同一分级字段同值在同策略下跨记录/跨层级/跨位置同令牌；</li>
  *   <li>处理中检查耗时上限；任意拒绝直接抛出异常，不返回半成品数据。</li>
  * </ol>
  * 路径采用双轨表示：规范路径（如 {@code contacts[].email}，{@code []} 不区分元素位置）
- * 用于分级匹配、令牌密钥派生与审计字段路径；定位路径（如 {@code contacts[2].email}）
+ * 用于分级匹配、审计字段路径与失败定位；令牌密钥派生则只使用识别结果中的
+ * “命中的分级字段键”（如裸字段名 {@code email}，或精确路径键 {@code person.passportNo}），
+ * 与记录内规范路径相互独立。定位路径（如 {@code contacts[2].email}）
  * 仅用于把失败定位到具体数组元素/记录字段。
  * 判定基于传入的版本快照，与缓存刷新相互独立。
  */
@@ -168,10 +172,10 @@ public class DefaultDataProcessingEngine implements DataProcessingEngine {
     private Object transformNode(Object node, String canonical, String locator, int depth, Ctx ctx) {
         checkTimeout(ctx.startNanos, ctx.recordIndex, locator);
         // 每个节点先做字段识别：命中分级的键必须是标量或标量数组，绝不递归穿透成普通子树
-        SensitivityLevel level = canonical.isEmpty() ? null
-                : classificationService.classify(ctx.classification, canonical);
-        if (level != null) {
-            return transformClassified(node, canonical, locator, level, ctx);
+        FieldClassification classification = canonical.isEmpty() ? null
+                : classificationService.resolve(ctx.classification, canonical);
+        if (classification != null) {
+            return transformClassified(node, canonical, locator, classification, ctx);
         }
         if (node instanceof Map<?, ?> map) {
             Map<String, Object> out = new LinkedHashMap<>();
@@ -187,7 +191,8 @@ public class DefaultDataProcessingEngine implements DataProcessingEngine {
         if (node instanceof List<?> list) {
             List<Object> out = new ArrayList<>(list.size());
             for (int idx = 0; idx < list.size(); idx++) {
-                // 规范路径对数组元素一视同仁（[]），保证跨位置/跨记录同值同策略同令牌
+                // 规范路径对数组元素一视同仁（[]），仅用于分级匹配/审计/定位；
+                // 命中间键不含下标，跨位置/跨层级/跨记录同值同策略同令牌
                 String childCanonical = canonical + "[]";
                 String childLocator = locator + "[" + idx + "]";
                 out.add(transformNode(list.get(idx), childCanonical, childLocator,
@@ -199,11 +204,13 @@ public class DefaultDataProcessingEngine implements DataProcessingEngine {
     }
 
     private Object transformClassified(Object node, String canonical, String locator,
-                                       SensitivityLevel level, Ctx ctx) {
+                                       FieldClassification classification, Ctx ctx) {
+        SensitivityLevel level = classification.level();
         PolicyService.Decision decision = policyService.evaluate(ctx.policy, ctx.request, level);
         ctx.basis.add(decision.basis());
-        log.info("FIELD decision inputField={} rawType={} caller={} purpose={} recordIndex={} basis={}",
-                canonical, node == null ? "null" : node.getClass().getSimpleName(),
+        log.info("FIELD decision inputField={} fieldKey={} rawType={} caller={} purpose={} recordIndex={} basis={}",
+                canonical, classification.fieldKey(),
+                node == null ? "null" : node.getClass().getSimpleName(),
                 ctx.request.callerId(), ctx.request.purpose(), ctx.recordIndex, decision.basis());
         if (!decision.allowed()) {
             throw batchFail(decision.denyReason(), ctx.recordIndex, locator,
@@ -222,8 +229,11 @@ public class DefaultDataProcessingEngine implements DataProcessingEngine {
                     "classified field must be a scalar or scalar array: " + canonical
                             + " (actual=object)", ctx.startNanos);
         }
+        // 令牌域 = 命中的分级字段键（与层级/数组下标/排序位置/记录序号无关），
+        // 保证同一原始值落在同一分级字段、同一策略版本下令牌恒定；
+        // 记录内规范路径 canonical 仅用于审计/定位，不参与密钥派生。
         ValueTransformer transformer = transformerFactory.create(
-                transformType, ctx.policy.version(), canonical);
+                transformType, ctx.policy.version(), classification.fieldKey());
         Object transformed;
         if (node instanceof List<?> list) {
             List<Object> out = new ArrayList<>(list.size());
