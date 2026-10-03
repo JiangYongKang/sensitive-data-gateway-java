@@ -1,5 +1,6 @@
 package com.github.highcumontoa.sensitivedatagatewayjava.engine;
 
+import com.github.highcumontoa.sensitivedatagatewayjava.classification.Classification;
 import com.github.highcumontoa.sensitivedatagatewayjava.classification.ClassificationDefinition;
 import com.github.highcumontoa.sensitivedatagatewayjava.classification.ClassificationService;
 import com.github.highcumontoa.sensitivedatagatewayjava.config.GatewayProperties;
@@ -31,12 +32,13 @@ import java.util.Map;
  *   <li>敏感字段逐字段做策略判定：未授权/用途不匹配/等级不足即时拒绝；</li>
  *   <li>允许字段做 NONE/MASK/REDACT/TOKENIZE，层级与 JSON 类型族保持不变；
  *       命分级的键若承载标量数组，则逐元素转换、保持数组长度与顺序，
- *       且同一转换器派生自记录内规范路径，跨记录/跨位置同值同令牌；</li>
+ *       且同一转换器派生自命中的分级字段键，跨记录/跨层级/跨数组位置同值同令牌；</li>
  *   <li>处理中检查耗时上限；任意拒绝直接抛出异常，不返回半成品数据。</li>
  * </ol>
  * 路径采用双轨表示：规范路径（如 {@code contacts[].email}，{@code []} 不区分元素位置）
- * 用于分级匹配、令牌密钥派生与审计字段路径；定位路径（如 {@code contacts[2].email}）
- * 仅用于把失败定位到具体数组元素/记录字段。
+ * 用于分级匹配与审计字段路径；定位路径（如 {@code contacts[2].email}）
+ * 仅用于把失败定位到具体数组元素/记录字段。令牌密钥派生使用命中的分级字段键
+ * （见 {@link Classification#fieldKey()}），与规范路径解耦。
  * 判定基于传入的版本快照，与缓存刷新相互独立。
  */
 @Component
@@ -168,10 +170,10 @@ public class DefaultDataProcessingEngine implements DataProcessingEngine {
     private Object transformNode(Object node, String canonical, String locator, int depth, Ctx ctx) {
         checkTimeout(ctx.startNanos, ctx.recordIndex, locator);
         // 每个节点先做字段识别：命中分级的键必须是标量或标量数组，绝不递归穿透成普通子树
-        SensitivityLevel level = canonical.isEmpty() ? null
-                : classificationService.classify(ctx.classification, canonical);
-        if (level != null) {
-            return transformClassified(node, canonical, locator, level, ctx);
+        Classification matched = canonical.isEmpty() ? null
+                : classificationService.match(ctx.classification, canonical);
+        if (matched != null) {
+            return transformClassified(node, canonical, locator, matched, ctx);
         }
         if (node instanceof Map<?, ?> map) {
             Map<String, Object> out = new LinkedHashMap<>();
@@ -199,7 +201,8 @@ public class DefaultDataProcessingEngine implements DataProcessingEngine {
     }
 
     private Object transformClassified(Object node, String canonical, String locator,
-                                       SensitivityLevel level, Ctx ctx) {
+                                       Classification matched, Ctx ctx) {
+        SensitivityLevel level = matched.level();
         PolicyService.Decision decision = policyService.evaluate(ctx.policy, ctx.request, level);
         ctx.basis.add(decision.basis());
         log.info("FIELD decision inputField={} rawType={} caller={} purpose={} recordIndex={} basis={}",
@@ -222,8 +225,11 @@ public class DefaultDataProcessingEngine implements DataProcessingEngine {
                     "classified field must be a scalar or scalar array: " + canonical
                             + " (actual=object)", ctx.startNanos);
         }
+        // 令牌密钥按“命中的分级字段键”派生，而非记录内出现位置：
+        // 同一原始值在同一分级字段、同一策略版本下，无论出现在顶层、嵌套对象
+        // 还是任意数组下标、哪条记录，令牌都一致；不同分级字段/不同版本仍可区分。
         ValueTransformer transformer = transformerFactory.create(
-                transformType, ctx.policy.version(), canonical);
+                transformType, ctx.policy.version(), matched.fieldKey());
         Object transformed;
         if (node instanceof List<?> list) {
             List<Object> out = new ArrayList<>(list.size());

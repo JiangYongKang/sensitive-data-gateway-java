@@ -13,8 +13,10 @@ import java.util.HexFormat;
 /**
  * 默认转换器工厂。
  * 稳定性：掩码与脱敏为纯函数字符串处理；令牌化使用 HMAC-SHA256，
- * 密钥由固定本地根盐 + 策略版本 + 字段路径派生，因此同一原始值在同一策略版本、
- * 同一字段下输出恒定；策略版本变更后令牌随之改变，避免跨版本关联。
+ * 密钥由固定本地根盐 + 策略版本 + 分级字段键（分级定义中的字段键，
+ * 与字段在记录内的出现位置无关）派生，因此同一原始值在同一策略版本、
+ * 同一分级字段下，无论出现在顶层、嵌套对象、任意数组下标或哪条记录，
+ * 输出都恒定；不同分级字段、不同策略版本输出不同，避免跨字段/跨版本关联。
  * 全部为本地实现，不依赖外部服务或真实凭据。
  */
 @Component
@@ -23,7 +25,7 @@ public class DefaultTransformerFactory implements TransformerFactory {
     private static final String LOCAL_ROOT_SALT = "local-sensitive-data-gateway|v1";
 
     @Override
-    public ValueTransformer create(TransformType type, String policyVersion, String fieldPath) {
+    public ValueTransformer create(TransformType type, String policyVersion, String fieldKey) {
         if (type == null) {
             throw new GatewayException(GatewayErrorCode.INTERNAL_ERROR, "transform type required");
         }
@@ -31,7 +33,7 @@ public class DefaultTransformerFactory implements TransformerFactory {
             case NONE -> new IdentityTransformer();
             case MASK -> new MaskTransformer();
             case REDACT -> new RedactTransformer();
-            case TOKENIZE -> new TokenizeTransformer(policyVersion, fieldPath);
+            case TOKENIZE -> new TokenizeTransformer(policyVersion, fieldKey);
         };
     }
 
@@ -98,8 +100,8 @@ public class DefaultTransformerFactory implements TransformerFactory {
 
         private final byte[] keyBytes;
 
-        private TokenizeTransformer(String policyVersion, String fieldPath) {
-            String keyMaterial = LOCAL_ROOT_SALT + "|policy=" + policyVersion + "|field=" + fieldPath;
+        private TokenizeTransformer(String policyVersion, String fieldKey) {
+            String keyMaterial = LOCAL_ROOT_SALT + "|policy=" + policyVersion + "|field=" + fieldKey;
             this.keyBytes = keyMaterial.getBytes(StandardCharsets.UTF_8);
         }
 

@@ -85,7 +85,7 @@ curl -s -X POST http://localhost:8080/api/v1/data/batch \
   "policyVersion": "policy-v1",
   "classificationVersion": "classification-v1",
   "data": [
-    { "name": "A***e", "email": "tok_a1...", "contacts": [ { "email": "tok_c6..." } ] },
+    { "name": "A***e", "email": "tok_c6...", "contacts": [ { "email": "tok_c6..." } ] },
     { "name": "B*b",   "email": "tok_b2...", "contacts": [ { "email": "tok_c6..." } ] }
   ],
   "fieldResults": [
@@ -127,11 +127,16 @@ curl -s -X POST http://localhost:8080/api/v1/data/batch \
 - `fieldResults` 按 `recordIndex` 归组、按遍历顺序排列，`field.path` 是**记录内
   规范路径**（不含记录序号；数组元素统一记为 `[]`，如 `contacts[].email`），可
   直接定位到该记录内字段。
-- **令牌跨记录、跨数组位置稳定**：令牌密钥由“固定根盐 + 策略版本 + 记录内规范
-  字段路径”派生，与记录序号、数组下标、排序位置无关。因此同一原始值在**同一
-  字段、同一策略下**，无论出现在哪条记录或数组哪个位置，令牌都相同（如上例两条
-  记录的 `contacts[0].email` 同为 `dup@example.com` → 同一 `tok_c6...`）；不同
-  字段同值、或不同策略版本，令牌不同。
+- **令牌跨记录、跨层级、跨数组位置稳定**：令牌密钥由“固定根盐 + 策略版本 +
+  **分级字段键**”（分级定义中命中的字段键，如 `email`）派生，与记录序号、
+  嵌套层级、数组下标、排序位置完全无关。因此同一原始值落在**同一分级字段、
+  同一策略版本**下，无论出现在顶层字段、嵌套对象还是任意数组元素、同一记录
+  的多个位置或整批的不同记录，令牌都相同（如上例两条记录的顶层 `email` 与
+  `contacts[].email` 同为 `dup@example.com` → 同一 `tok_c6...`），下游可直接
+  按令牌关联同一客户。一批中既有顶层同名字段又有嵌套同名字段时同样成立。
+- **可区分性不被对齐破坏**：同一原始值落在**不同分级字段**（如 `email` 与
+  `phone`）令牌不同；**不同策略版本**下同一字段同一值令牌也不同（不可跨版本
+  关联）。对齐只发生在“同一分级字段 + 同一策略版本”内部。
 - 所有不可逆转换（`MASK`/`REDACT`/`TOKENIZE`）在 `fieldResults[].field.reversible=false`
   明确标注；`NONE` 为可逆原值透传。
 
@@ -152,6 +157,8 @@ curl -s -X POST http://localhost:8080/api/v1/data/batch \
   address=L3, ssn/bankAccount/passportNo=L4）。
 - **字段键**：支持精确规范路径（`person.passportNo`）与裸字段名（`ssn`，任意层级匹配）。
   匹配顺序：精确路径 → 裸字段名。未列入的字段视为**普通字段，原样透传**。
+  命中的字段键同时是**令牌身份**：同一字段键在记录内任何层级/数组位置/不同记录
+  中都解析为同一个键，令牌密钥据此派生（见第 4 节）。
 - **分级未定义不得静默跳过**：`unclassified` 列出“已知敏感但尚未定等级”的字段
   （如 `taxId`）。数据中一旦出现，整个请求以 `CLASSIFICATION_UNDEFINED` 拒绝。
 - **字段缺失不得静默跳过**：`required` 中的字段必须出现（支持精确路径或裸字段名），
@@ -189,9 +196,11 @@ curl -s -X POST http://localhost:8080/api/v1/data/batch \
 | `REDACT` | 常量 `***REDACTED***` | 否 |
 | `TOKENIZE` | `tok_` + HMAC-SHA256 摘要前 32 个十六进制字符 | 否 |
 
-**稳定性**：令牌化密钥由“固定本地根盐 + 策略版本 + 字段路径”派生。
-因此**同一原始值在同一策略版本、同一字段下输出恒定**；
-策略版本变更后令牌随之改变（不可跨版本关联）；不同字段同值也不同令牌。
+**稳定性**：令牌化密钥由“固定本地根盐 + 策略版本 + 分级字段键”派生
+（分级字段键即分级定义中命中的字段键，与字段在记录内的出现位置无关）。
+因此**同一原始值在同一策略版本、同一分级字段下，无论出现在顶层、嵌套对象、
+任意数组下标或哪条记录，输出都恒定**；策略版本变更后令牌随之改变（不可跨版本
+关联）；不同分级字段同值也不同令牌。
 所有不可逆转换在 `fieldResults[].reversible=false` 明确标注。
 转换不改变 JSON 层级，输出与原字段保持同一类型族（字符串→字符串）。
 
@@ -296,6 +305,10 @@ mvn test
 - `BatchAccessTests`：批量正常放行、顺序/层级/数组长度/类型保持、跨记录与数组内
   同值令牌稳定、记录内路径定位、坏数据/越权/等级越权/缺字段/非对象/记录数超限/
   单条深度超限/整批节点超限/空批次的全有或全无拒绝。
+- `TokenStabilityTests`：令牌稳定性（客户数据关联场景）——同一原始值在同一记录内
+  顶层/嵌套对象/不同数组下标同令牌、跨记录（顶层与嵌套混合批次）同令牌、单条与
+  批量同令牌；同一原始值不同分级字段可区分、不同策略版本可区分；批量顺序/层级/
+  数组长度/类型保持且令牌不可逆；失败仍整批拒绝并定位到记录序号与字段位置。
 - `BatchVersionConsistencyTests`：并发发布时整批版本一致、已发布非当前与从未发布
   版本的区分（含审计）、撤销授权对批量立即生效。
 - `BatchAuditFailureTests`：批量放行与拒绝两条路径审计写失败均 fail-closed。
@@ -303,6 +316,11 @@ mvn test
 - `AuditFailureTests`：单条放行与拒绝路径下审计写失败均 fail-closed，且不泄漏内部细节。
 - `LimitTests`：深度、规模上限与非法 JSON。
 - `TransformerTests`：掩码/脱敏/令牌化规则、稳定性、版本与字段绑定、可逆标注。
+
+测试日志中的业务覆盖情况由 `BusinessCoverageListener`（JUnit 扩展，自动注册）
+输出：每个测试类视为一个业务，逐条打印 `[业务覆盖] 业务开始/业务完成` 与
+`[业务覆盖] 用例通过/失败`，可直接从 `mvn test` 日志看出覆盖了哪些业务以及
+各业务的用例数与通过情况。
 
 ### 本地启动与手动验证
 
@@ -321,6 +339,17 @@ curl -s -X POST http://localhost:8080/api/v1/data/batch \
   -d '{"callerId":"caller-analytics","purpose":"analytics",
        "records":[{"name":"Alice","email":"a@x.com"},{"name":"Bob","email":"b@x.com"}]}'
 
+# 令牌跨层级/跨记录稳定性手动验证：同一原始值 dup@example.com 出现在
+# 记录0顶层、记录0嵌套对象、记录1数组元素，三处令牌必须完全相同
+curl -s -X POST http://localhost:8080/api/v1/data/batch \
+  -H 'Content-Type: application/json' \
+  -d '{"callerId":"caller-analytics","purpose":"analytics",
+       "records":[
+         {"name":"Alice","email":"dup@example.com",
+          "profile":{"contact":{"email":"dup@example.com"}}},
+         {"name":"Bob","contacts":[{"email":"dup@example.com"},
+                                   {"email":"other@example.com"}]}]}'
+
 # 查看审计（单条/批量）
 curl -s http://localhost:8080/api/v1/audit
 ```
@@ -331,7 +360,7 @@ curl -s http://localhost:8080/api/v1/audit
 domain/            错误码、异常（含记录/字段定位）、等级、转换类型、单条/批量请求结果审计模型
 classification/     分级定义、版本注册表（原子发布）、识别服务
 policy/             策略/Grant 定义、版本注册表、判定服务、版本快照解析器（区分未发布/非当前）
-transform/          掩码/脱敏/令牌化转换器与工厂（令牌按记录内规范字段路径派生）
+transform/          掩码/脱敏/令牌化转换器与工厂（令牌按分级字段键派生，与出现位置无关）
 audit/              审计存储（含保留上限）与审计服务（单条/批量，fail-closed）
 engine/             嵌套遍历、识别+判定+转换、批量预检、深度/规模/耗时强制
 service/            单条与批量网关门面：版本解析 → 处理 → 审计 编排（批量全有或全无）

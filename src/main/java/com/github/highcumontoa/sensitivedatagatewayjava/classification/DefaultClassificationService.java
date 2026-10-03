@@ -8,6 +8,8 @@ import org.springframework.stereotype.Component;
 /**
  * 默认字段识别与分级。
  * 键匹配顺序：精确规范路径 -> 裸字段名（最后一段）。
+ * 命中后返回分级定义中的字段键（{@link Classification#fieldKey()}），
+ * 同一字段键在记录内任何层级/数组位置都解析为同一个键，供令牌密钥派生使用。
  * 命中 {@code unclassified} 清单时抛出 CLASSIFICATION_UNDEFINED（可区分，绝不静默跳过）。
  */
 @Component
@@ -20,7 +22,7 @@ public class DefaultClassificationService implements ClassificationService {
     }
 
     @Override
-    public SensitivityLevel classify(ClassificationDefinition def, String canonicalPath) {
+    public Classification match(ClassificationDefinition def, String canonicalPath) {
         if (def == null) {
             throw new GatewayException(GatewayErrorCode.POLICY_NOT_FOUND,
                     "classification version not available");
@@ -30,12 +32,12 @@ public class DefaultClassificationService implements ClassificationService {
         }
         SensitivityLevel level = def.fieldLevels().get(canonicalPath);
         if (level != null) {
-            return level;
+            return new Classification(canonicalPath, level);
         }
         String leaf = leafName(canonicalPath);
         level = def.fieldLevels().get(leaf);
         if (level != null) {
-            return level;
+            return new Classification(leaf, level);
         }
         if (def.unclassified().contains(canonicalPath) || def.unclassified().contains(leaf)) {
             throw new GatewayException(GatewayErrorCode.CLASSIFICATION_UNDEFINED,
